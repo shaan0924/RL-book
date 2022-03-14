@@ -46,37 +46,6 @@ class TabularQValueFunctionApprox(Generic[S, A]):
         return self.values[x_value]
 
 
-def double_epsilon_greedy(
-    q1: TabularQValueFunctionApprox[S,A],
-    q2: TabularQValueFunctionApprox[S,A],
-    nt_state: NonTerminal[S],
-    actions: Set[A],
-    epsilon: float
-) -> A:
-    greedy_action: A = max(
-        ((a, q1.__call__((nt_state, a)) + q2.__call__((nt_state, a)) ) for a in actions),
-        key=operator.itemgetter(1)
-    )[0]
-    return Categorical(
-        {a: epsilon/len(actions) + 
-        (1 - epsilon if a == greedy_action else 0.) for a in actions}
-    ).sample()
-
-
-def tabular_epsilon_greedy(
-    q: TabularQValueFunctionApprox[S,A],
-    nt_state: NonTerminal[S],
-    actions: Set[A],
-    epsilon: float
-) -> A:
-    greedy_action: A = max(
-        ((a, q.__call__((nt_state, a))) for a in actions),
-        key=operator.itemgetter(1)
-    )[0]
-    return Categorical(
-        {a: epsilon/len(actions) +
-        (1 - epsilon if a == greedy_action else 0.) for a in actions}
-    ).sample()
 
 def double_q_learning(
     mdp: MarkovDecisionProcess[S, A],
@@ -94,27 +63,31 @@ def double_q_learning(
         state: NonTerminal[S] = states.sample()
         t: int = 0
         while isinstance(state, NonTerminal):
-            action: A = double_epsilon_greedy(q1, q2, state, set(mdp.actions(state)), 0.1)
+            action: A = epsilon_greedy_action(
+                q= q1 + q2,
+                nt_state=state,
+                actions=set(mdp.actions(state)),
+                epsilon=0.1
+            )
             next_state, reward = mdp.step(state, action).sample()
 
             unif_var = random.uniform(0,1)
 
             if unif_var > 0.5:
                 next_return: float = max(
-                    q1((next_state, a))
+                    q2((next_state, a))
                     for a in mdp.actions(next_state)
                 ) if isinstance(next_state, NonTerminal[S]) else 0.
-                q1 = q1.update(k= ((state, action)), tgt= reward + gamma* next_return)
-                yield q1
+                q1 = q1.update(k= ((state, action)), tgt= reward + gamma*next_return)
             else:
                 next_return: float = max(
                     q1((next_state, a))
                     for a in mdp.actions(next_state)
                 ) if isinstance(next_state, NonTerminal[S]) else 0.
                 q2 = q2.update(k= ((state, action)), tgt= reward + gamma*next_return)
-                yield q2
             t += 1
             state = next_state
+        yield (q1 + q2)/2
     ##### End Your Code HERE #########
     
             
@@ -133,16 +106,21 @@ def q_learning(
         state: NonTerminal[S] = states.sample()
         t: int = 0
         while isinstance(state, NonTerminal[S]):
-            action: A = tabular_epsilon_greedy(q,state,set(mdp.actions(state)),0.1)
+            action: A = epsilon_greedy_action(
+                q=q,
+                nt_state=state,
+                actions=set(mdp.actions(state)),
+                epsilon=0.1
+            )
             next_state, reward = mdp.step(state, action).sample()
             next_return: float = max(
                 q((next_state, a))
                 for a in mdp.actions(next_state)
             ) if isinstance(next_state, NonTerminal[S]) else 0.
             q = q.update(k= ((state, action)), tgt= reward + gamma*next_return)
-            yield q
             t += 1
             state = next_state
+        yield q
     ##### End Your Code HERE #########
 
 
@@ -193,5 +171,5 @@ class P1MDP(MarkovDecisionProcess[P1State, str]):
             else:
                 return Categorical({((Terminal(P1State("Done")), 0)): 1})
         else:
-            return Categorical({((Terminal(P1State("Done")), np.random.normal(-0.1,1))): 1})[ ]
+            return Categorical({((Terminal(P1State("Done")), np.random.normal(-0.1,1))): 1})
         ##### End Your Code HERE #########
