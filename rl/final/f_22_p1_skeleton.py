@@ -2,7 +2,7 @@ from rl.distribution import Distribution, Constant, Gaussian, Choose, SampledDis
 from itertools import product
 from collections import defaultdict
 import operator
-from typing import Mapping, Iterator, TypeVar, Tuple, Dict, Iterable, Generic
+from typing import Mapping, Iterator, TypeVar, Tuple, Dict, Iterable, Generic, Set
 
 import numpy as np
 
@@ -46,30 +46,103 @@ class TabularQValueFunctionApprox(Generic[S, A]):
         return self.values[x_value]
 
 
+def double_epsilon_greedy(
+    q1: TabularQValueFunctionApprox[S,A],
+    q2: TabularQValueFunctionApprox[S,A],
+    nt_state: NonTerminal[S],
+    actions: Set[A],
+    epsilon: float
+) -> A:
+    greedy_action: A = max(
+        ((a, q1.__call__((nt_state, a)) + q2.__call__((nt_state, a)) ) for a in actions),
+        key=operator.itemgetter(1)
+    )[0]
+    return Categorical(
+        {a: epsilon/len(actions) + 
+        (1 - epsilon if a == greedy_action else 0.) for a in actions}
+    ).sample()
+
+
+def tabular_epsilon_greedy(
+    q: TabularQValueFunctionApprox[S,A],
+    nt_state: NonTerminal[S],
+    actions: Set[A],
+    epsilon: float
+) -> A:
+    greedy_action: A = max(
+        ((a, q.__call__((nt_state, a))) for a in actions),
+        key=operator.itemgetter(1)
+    )[0]
+    return Categorical(
+        {a: epsilon/len(actions) +
+        (1 - epsilon if a == greedy_action else 0.) for a in actions}
+    ).sample()
 
 def double_q_learning(
     mdp: MarkovDecisionProcess[S, A],
     states: NTStateDistribution[S],
-    γ: float
+    gamma: float
 ) -> Iterator[TabularQValueFunctionApprox[S, A]]:
     '''
     Implement the double q-learning algorithm as outlined in the question
     '''
     ##### Your Code HERE #########
-    
+    q1 = TabularQValueFunctionApprox[S,A]
+    q2 = TabularQValueFunctionApprox[S,A]
+    yield q1
+    while True:
+        state: NonTerminal[S] = states.sample()
+        t: int = 0
+        while isinstance(state, NonTerminal):
+            action: A = double_epsilon_greedy(q1, q2, state, set(mdp.actions(state)), 0.1)
+            next_state, reward = mdp.step(state, action).sample()
+
+            unif_var = random.uniform(0,1)
+
+            if unif_var > 0.5:
+                next_return: float = max(
+                    q1((next_state, a))
+                    for a in mdp.actions(next_state)
+                ) if isinstance(next_state, NonTerminal[S]) else 0.
+                q1 = q1.update(k= ((state, action)), tgt= reward + gamma* next_return)
+                yield q1
+            else:
+                next_return: float = max(
+                    q1((next_state, a))
+                    for a in mdp.actions(next_state)
+                ) if isinstance(next_state, NonTerminal[S]) else 0.
+                q2 = q2.update(k= ((state, action)), tgt= reward + gamma*next_return)
+                yield q2
+            t += 1
+            state = next_state
     ##### End Your Code HERE #########
     
             
 def q_learning(
     mdp: MarkovDecisionProcess[S, A],
     states: NTStateDistribution[S],
-    γ: float
+    gamma: float
 ) -> Iterator[TabularQValueFunctionApprox[S, A]]:
     '''
     Implement the standard q-learning algorithm as outlined in the question
     '''
     ##### Your Code HERE #########
-    pass
+    q = TabularQValueFunctionApprox[S,A]
+    yield q
+    while True:
+        state: NonTerminal[S] = states.sample()
+        t: int = 0
+        while isinstance(state, NonTerminal[S]):
+            action: A = tabular_epsilon_greedy(q,state,set(mdp.actions(state)),0.1)
+            next_state, reward = mdp.step(state, action).sample()
+            next_return: float = max(
+                q((next_state, a))
+                for a in mdp.actions(next_state)
+            ) if isinstance(next_state, NonTerminal[S]) else 0.
+            q = q.update(k= ((state, action)), tgt= reward + gamma*next_return)
+            yield q
+            t += 1
+            state = next_state
     ##### End Your Code HERE #########
 
 
@@ -80,7 +153,7 @@ class P1State:
     Add any data and functionality you need from your state
     '''
     ##### Your Code HERE #########
-    
+    value: str
     ##### End Your Code HERE #########
     
 
@@ -95,7 +168,14 @@ class P1MDP(MarkovDecisionProcess[P1State, str]):
         return the actions available from: state
         '''
         ##### Your Code HERE #########
-        pass
+        if state.state.value == "A":
+            return ["a1", "a2"]
+        else:
+            blist = []
+            for i in range(self.n):
+                blist.append(str(i))
+            return blist
+
         ##### End Your Code HERE #########
     
     def step(
@@ -107,5 +187,11 @@ class P1MDP(MarkovDecisionProcess[P1State, str]):
         return the distribution of next states conditioned on: (state, action)
         '''
         ##### Your Code HERE #########
-        pass
+        if state.state.value == "A":
+            if action == "a1":
+                return Categorical({((NonTerminal(P1State("B")), 0)): 1})
+            else:
+                return Categorical({((Terminal(P1State("Done")), 0)): 1})
+        else:
+            return Categorical({((Terminal(P1State("Done")), np.random.normal(-0.1,1))): 1})[ ]
         ##### End Your Code HERE #########
