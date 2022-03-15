@@ -32,6 +32,7 @@ class TabularQValueFunctionApprox(Generic[S, A]):
     also tracks the number of updates per state
     You should use this class in your implementation
     '''
+
     
     def __init__(self):
         self.counts: Mapping[Tuple[NonTerminal[S], A], int] = defaultdict(int)
@@ -45,6 +46,23 @@ class TabularQValueFunctionApprox(Generic[S, A]):
     def __call__(self, x_value: Tuple[NonTerminal[S], A]) -> float:
         return self.values[x_value]
 
+    
+def greedy_double_q(
+    q1: TabularQValueFunctionApprox[S,A],
+    q2: TabularQValueFunctionApprox[S,A],
+    nt_state: NonTerminal[S],
+    actions: Set[A],
+    epsilon: float
+) -> A:
+    greedy_action: A = max(
+        ((a, q1((nt_state, a)) + q2((nt_state,a))) for a in actions),
+        key=operator.itemgetter(1)
+    )[0]
+    return Categorical(
+        {a: epsilon / len(actions) +
+         (1 - epsilon if a == greedy_action else 0.) for a in actions}
+    ).sample()
+
 
 
 def double_q_learning(
@@ -52,19 +70,20 @@ def double_q_learning(
     states: NTStateDistribution[S],
     gamma: float
 ) -> Iterator[TabularQValueFunctionApprox[S, A]]:
-    '''
-    Implement the double q-learning algorithm as outlined in the question
-    '''
+
     ##### Your Code HERE #########
-    q1 = TabularQValueFunctionApprox[S,A]
-    q2 = TabularQValueFunctionApprox[S,A]
-    yield q1
+    q1 = TabularQValueFunctionApprox[S,A]()
+    q2 = TabularQValueFunctionApprox[S,A]()
+    q_approx = TabularQValueFunctionApprox[S,A]()
+    yield q_approx
     while True:
         state: NonTerminal[S] = states.sample()
         t: int = 0
+
         while isinstance(state, NonTerminal):
-            action: A = epsilon_greedy_action(
-                q= q1 + q2,
+            action: A = greedy_double_q(
+                q1=q1,
+                q2=q2,
                 nt_state=state,
                 actions=set(mdp.actions(state)),
                 epsilon=0.1
@@ -74,20 +93,28 @@ def double_q_learning(
             unif_var = random.uniform(0,1)
 
             if unif_var > 0.5:
-                next_return: float = max(
-                    q2((next_state, a))
-                    for a in mdp.actions(next_state)
-                ) if isinstance(next_state, NonTerminal[S]) else 0.
-                q1 = q1.update(k= ((state, action)), tgt= reward + gamma*next_return)
+                next_return: float = 0
+                if isinstance(next_state, NonTerminal):
+                    max_act: A = max(
+                        ((a, q2((next_state, a))) for a in mdp.actions(next_state)),   
+                        key=operator.itemgetter(1)
+                        )[0]
+                    next_return = q1((next_state,max_act))
+                q1.update(k= ((state, action)), tgt= reward + gamma*next_return)
             else:
-                next_return: float = max(
-                    q1((next_state, a))
-                    for a in mdp.actions(next_state)
-                ) if isinstance(next_state, NonTerminal[S]) else 0.
-                q2 = q2.update(k= ((state, action)), tgt= reward + gamma*next_return)
+                next_return: float = 0
+                if isinstance(next_state, NonTerminal):
+                    max_act: A = max(
+                        ((a, q1((next_state, a))) for a in mdp.actions(next_state)),
+                        key=operator.itemgetter(1)
+                    )[0]
+                    next_return = q2((next_state,max_act))
+                q2.update(k= ((state, action)), tgt= reward + gamma*next_return)
+            q_approx.values[(state,action)] = (q1((state,action)) + q1((state,action)))/2
+            q_approx.counts[(state,action)] += 1
             t += 1
             state = next_state
-        yield (q1 + q2)/2
+        yield q_approx
     ##### End Your Code HERE #########
     
             
@@ -96,31 +123,29 @@ def q_learning(
     states: NTStateDistribution[S],
     gamma: float
 ) -> Iterator[TabularQValueFunctionApprox[S, A]]:
-    '''
-    Implement the standard q-learning algorithm as outlined in the question
-    '''
+
     ##### Your Code HERE #########
-    q = TabularQValueFunctionApprox[S,A]
-    yield q
+    qfunc = TabularQValueFunctionApprox[S,A]()
+    yield qfunc
     while True:
         state: NonTerminal[S] = states.sample()
         t: int = 0
-        while isinstance(state, NonTerminal[S]):
+        while isinstance(state, NonTerminal):
             action: A = epsilon_greedy_action(
-                q=q,
+                q=qfunc,
                 nt_state=state,
                 actions=set(mdp.actions(state)),
-                epsilon=0.1
+                ϵ=0.1
             )
             next_state, reward = mdp.step(state, action).sample()
             next_return: float = max(
-                q((next_state, a))
+                qfunc((next_state, a))
                 for a in mdp.actions(next_state)
-            ) if isinstance(next_state, NonTerminal[S]) else 0.
-            q = q.update(k= ((state, action)), tgt= reward + gamma*next_return)
+            ) if isinstance(next_state, NonTerminal) else 0.
+            qfunc.update(k= ((state, action)), tgt= reward + gamma*next_return)
             t += 1
             state = next_state
-        yield q
+        yield qfunc
     ##### End Your Code HERE #########
 
 
@@ -139,7 +164,6 @@ class P1MDP(MarkovDecisionProcess[P1State, str]):
     
     def __init__(self, n):
         self.n = n
-        
         
     def actions(self, state: NonTerminal[P1State]) -> Iterable[str]:
         '''
@@ -171,5 +195,6 @@ class P1MDP(MarkovDecisionProcess[P1State, str]):
             else:
                 return Categorical({((Terminal(P1State("Done")), 0)): 1})
         else:
-            return Categorical({((Terminal(P1State("Done")), np.random.normal(-0.1,1))): 1})
+            rando = np.random.normal(-0.1,1)
+            return Categorical({((Terminal(P1State("Done")), rando)): 1})
         ##### End Your Code HERE #########
